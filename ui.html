@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: Inter, -apple-system, sans-serif;
+      font-size: 12px;
+      color: #1e1e1e;
+      background: #fff;
+      padding: 16px;
+      width: 340px;
+    }
+
+    h2 { font-size: 14px; font-weight: 600; margin-bottom: 16px; }
+    .section { margin-bottom: 14px; }
+
+    label.field-label {
+      display: block; font-weight: 500;
+      margin-bottom: 6px; color: #333;
+    }
+
+    .drop-zone {
+      border: 1.5px dashed #c4c4c4; border-radius: 6px;
+      padding: 14px 12px; display: flex; align-items: center;
+      gap: 10px; cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+      background: #fafafa; position: relative;
+    }
+    .drop-zone:hover { border-color: #18a0fb; background: #f0f8ff; }
+    .drop-zone input[type="file"] {
+      position: absolute; inset: 0; opacity: 0;
+      cursor: pointer; width: 100%; height: 100%;
+    }
+    .drop-zone .icon { font-size: 20px; flex-shrink: 0; }
+    .drop-zone .text { flex: 1; min-width: 0; }
+    .drop-zone .text .primary {
+      font-weight: 500; color: #333;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .drop-zone .text .secondary { font-size: 11px; color: #888; margin-top: 2px; }
+    .drop-zone.selected { border-color: #1bc47d; background: #f0fff8; }
+
+    .divider { height: 1px; background: #f0f0f0; margin: 14px 0; }
+
+    #progress-wrap { display: none; margin-bottom: 14px; }
+    #progress-label { font-size: 11px; color: #555; margin-bottom: 6px; }
+    #progress-bar-bg { height: 4px; background: #eee; border-radius: 2px; overflow: hidden; }
+    #progress-bar { height: 100%; background: #18a0fb; border-radius: 2px; width: 0%; transition: width 0.15s; }
+
+    #status { font-size: 11px; min-height: 16px; color: #888; margin-bottom: 12px; }
+    #status.error   { color: #e53935; }
+    #status.success { color: #1bc47d; }
+
+    .btn-row { display: flex; gap: 8px; }
+    button {
+      flex: 1; height: 32px; border-radius: 6px; border: none;
+      font-size: 12px; font-weight: 500; cursor: pointer;
+    }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    #btn-import { background: #18a0fb; color: #fff; }
+    #btn-import:hover:not(:disabled) { background: #0d8ee0; }
+    #btn-cancel { background: #f5f5f5; color: #333; }
+    #btn-cancel:hover:not(:disabled) { background: #ebebeb; }
+
+    .note { font-size: 10.5px; color: #aaa; margin-top: 10px; line-height: 1.5; }
+
+    #log-wrap { margin-top: 12px; }
+    #log-toggle {
+      font-size: 10.5px; color: #aaa; cursor: pointer;
+      user-select: none; display: flex; align-items: center; gap: 4px;
+    }
+    #log-toggle:hover { color: #555; }
+    #log-panel {
+      display: none; margin-top: 6px;
+      background: #1e1e1e; border-radius: 4px;
+      padding: 8px; max-height: 160px; overflow-y: auto;
+      font-family: monospace; font-size: 10px; line-height: 1.5;
+    }
+    #log-panel .entry       { color: #ccc; word-break: break-all; }
+    #log-panel .entry.warn  { color: #f0c040; }
+    #log-panel .entry.error { color: #f07070; }
+  </style>
+</head>
+<body>
+  <h2>Pencil (.pen) Importer</h2>
+
+  <div class="section">
+    <label class="field-label">1. Pencil file</label>
+    <div class="drop-zone" id="zone-pen">
+      <span class="icon">📄</span>
+      <div class="text">
+        <div class="primary" id="pen-name">Choose a .pen file…</div>
+        <div class="secondary">JSON design file exported from Pencil</div>
+      </div>
+      <input type="file" id="input-pen" accept=".pen,.json" />
+    </div>
+  </div>
+
+  <div class="section">
+    <label class="field-label">2. Images folder <span style="color:#aaa;font-weight:400">(optional)</span></label>
+    <div class="drop-zone" id="zone-img">
+      <span class="icon">🖼</span>
+      <div class="text">
+        <div class="primary" id="img-name">Select the images/ folder…</div>
+        <div class="secondary" id="img-count">No images selected</div>
+      </div>
+      <input type="file" id="input-img" multiple webkitdirectory />
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
+  <div id="progress-wrap">
+    <div id="progress-label">Working…</div>
+    <div id="progress-bar-bg"><div id="progress-bar"></div></div>
+  </div>
+
+  <div id="status"></div>
+
+  <div class="btn-row">
+    <button id="btn-cancel">Cancel</button>
+    <button id="btn-import" disabled>Import</button>
+  </div>
+
+  <p class="note">
+    Images streamed individually · Lucide icons fetched as SVG · Remote image fills auto-fetched
+  </p>
+
+  <div id="log-wrap">
+    <div id="log-toggle" onclick="toggleLog()">▶ Console log <span id="log-count"></span></div>
+    <div id="log-panel" id="log-panel"></div>
+  </div>
+
+  <script>
+    var penData    = null;
+    var imageFiles = [];   // File objects from directory picker
+
+    var inputPen   = document.getElementById('input-pen');
+    var inputImg   = document.getElementById('input-img');
+    var zonePen    = document.getElementById('zone-pen');
+    var zoneImg    = document.getElementById('zone-img');
+    var penNameEl  = document.getElementById('pen-name');
+    var imgNameEl  = document.getElementById('img-name');
+    var imgCountEl = document.getElementById('img-count');
+    var btnImport  = document.getElementById('btn-import');
+    var btnCancel  = document.getElementById('btn-cancel');
+    var statusEl   = document.getElementById('status');
+    var progressWrap  = document.getElementById('progress-wrap');
+    var progressBar   = document.getElementById('progress-bar');
+    var progressLabel = document.getElementById('progress-label');
+
+    // ── .pen file ─────────────────────────────────────────────────────────────
+    inputPen.addEventListener('change', function() {
+      var file = inputPen.files[0];
+      if (!file) return;
+      var reader = new FileReader();
+      reader.onload = function(e) {
+        try {
+          penData = JSON.parse(e.target.result);
+          penNameEl.textContent = file.name;
+          zonePen.classList.add('selected');
+          setStatus('');
+        } catch(_) {
+          setStatus('Invalid JSON in .pen file.', 'error');
+          penData = null;
+        }
+        checkReady();
+      };
+      reader.readAsText(file);
+    });
+
+    // ── Images folder ─────────────────────────────────────────────────────────
+    inputImg.addEventListener('change', function() {
+      var files = Array.from(inputImg.files).filter(function(f) {
+        return /\.(png|jpg|jpeg|gif|webp|svg)$/i.test(f.name);
+      });
+      imageFiles = files;
+      if (files.length > 0) {
+        var parts = (files[0].webkitRelativePath || files[0].name).split('/');
+        imgNameEl.textContent = parts.length > 1 ? parts[0] + '/' : files[0].name;
+        imgCountEl.textContent = files.length + ' image' + (files.length !== 1 ? 's' : '') + ' found';
+        zoneImg.classList.add('selected');
+      } else {
+        imgNameEl.textContent = 'Select the images/ folder…';
+        imgCountEl.textContent = 'No images selected';
+        zoneImg.classList.remove('selected');
+      }
+      setStatus('');
+      checkReady();
+    });
+
+    function checkReady() { btnImport.disabled = !penData; }
+    function setStatus(msg, type) { statusEl.textContent = msg; statusEl.className = type || ''; }
+    function setProgress(label, pct) {
+      progressWrap.style.display = 'block';
+      progressLabel.textContent = label;
+      progressBar.style.width = pct + '%';
+    }
+
+    // ── Import ────────────────────────────────────────────────────────────────
+    btnImport.addEventListener('click', function() {
+      if (!penData) return;
+      btnImport.disabled = true;
+      btnCancel.disabled = true;
+      setStatus('');
+      doImport().catch(function(err) {
+        progressWrap.style.display = 'none';
+        setStatus('Error: ' + err.message, 'error');
+        btnImport.disabled = false;
+        btnCancel.disabled = false;
+      });
+    });
+
+    async function doImport() {
+      // Build filename → File lookup
+      var fileMap = {};
+      imageFiles.forEach(function(f) { fileMap[f.name] = f; });
+
+      // Collect every asset reference in the pen tree
+      var localImageNames = new Set();   // e.g. "foo.png"
+      var remoteImageUrls = new Set();   // e.g. "https://…"
+      var iconKeys        = new Set();   // e.g. "lucide/globe"
+      collectRefs(penData.children || [], localImageNames, remoteImageUrls, iconKeys);
+
+      var totalImages = countMatching(localImageNames, fileMap) + remoteImageUrls.size;
+      var totalIcons  = iconKeys.size;
+      var totalAssets = totalImages + totalIcons;
+      var sent = 0;
+
+      // ── Tell the plugin what's coming ──────────────────────────────────────
+      send({ type: 'import_start', pen: penData });
+
+      // ── Stream local images ────────────────────────────────────────────────
+      var localArr = Array.from(localImageNames);
+      for (var i = 0; i < localArr.length; i++) {
+        var name = localArr[i];
+        var file = fileMap[name];
+        if (!file) { console.warn('Image not in folder:', name); continue; }
+        setProgress('Image ' + (sent + 1) + ' / ' + totalAssets + ' — ' + name,
+                    Math.round((sent / Math.max(totalAssets, 1)) * 85));
+        try {
+          var bytes = await readFileBytes(file);
+          send({ type: 'image', name: name, bytes: bytes });
+        } catch(e) { console.warn('Read failed:', name, e); }
+        sent++;
+        await tick();
+      }
+
+      // ── Fetch remote images ────────────────────────────────────────────────
+      var remoteArr = Array.from(remoteImageUrls);
+      for (var j = 0; j < remoteArr.length; j++) {
+        var url = remoteArr[j];
+        setProgress('Remote image ' + (sent + 1) + ' / ' + totalAssets + '…',
+                    Math.round((sent / Math.max(totalAssets, 1)) * 85));
+        try {
+          var remoteBytes = await fetchBytes(url);
+          send({ type: 'image', name: url, bytes: remoteBytes });
+        } catch(e) { console.warn('Fetch failed:', url, e); }
+        sent++;
+        await tick();
+      }
+
+      // ── Fetch icon SVGs from Lucide CDN ────────────────────────────────────
+      var iconArr = Array.from(iconKeys);
+      for (var k = 0; k < iconArr.length; k++) {
+        var iconKey = iconArr[k];           // "lucide/globe"
+        var parts   = iconKey.split('/');
+        var family  = parts[0];             // "lucide"
+        var iname   = parts[1];             // "globe"
+        setProgress('Icon ' + (sent + 1) + ' / ' + totalAssets + ' — ' + iconKey,
+                    Math.round((sent / Math.max(totalAssets, 1)) * 85));
+        try {
+          var svgString = await fetchIconSvg(family, iname);
+          send({ type: 'icon', key: iconKey, svgString: svgString });
+        } catch(e) { console.warn('Icon fetch failed:', iconKey, e); }
+        sent++;
+        await tick();
+      }
+
+      // ── Signal done ────────────────────────────────────────────────────────
+      setProgress('Building Figma nodes…', 92);
+      send({ type: 'import_end' });
+    }
+
+    // ── Tree scanner ──────────────────────────────────────────────────────────
+    function collectRefs(nodes, localSet, remoteSet, iconSet) {
+      for (var i = 0; i < nodes.length; i++) {
+        var n = nodes[i];
+        // Image fills
+        var fill = n.fill;
+        if (fill && typeof fill === 'object' && fill.type === 'image' && fill.url) {
+          var url = fill.url;
+          if (url.indexOf('http://') === 0 || url.indexOf('https://') === 0) {
+            remoteSet.add(url);
+          } else {
+            localSet.add(url.replace(/^\.\/images\//, '').replace(/^images\//, ''));
+          }
+        }
+        // Icons
+        if (n.type === 'icon_font' && n.iconFontName) {
+          var family = n.iconFontFamily || 'lucide';
+          iconSet.add(family + '/' + n.iconFontName);
+        }
+        if (n.children) collectRefs(n.children, localSet, remoteSet, iconSet);
+      }
+    }
+
+    function countMatching(nameSet, fileMap) {
+      var count = 0;
+      nameSet.forEach(function(n) { if (fileMap[n]) count++; });
+      return count;
+    }
+
+    // ── Fetch helpers ─────────────────────────────────────────────────────────
+    function readFileBytes(file) {
+      return new Promise(function(resolve, reject) {
+        var reader = new FileReader();
+        reader.onload  = function(e) { resolve(new Uint8Array(e.target.result)); };
+        reader.onerror = function()  { reject(new Error('Cannot read ' + file.name)); };
+        reader.readAsArrayBuffer(file);
+      });
+    }
+
+    async function fetchBytes(url) {
+      var res = await fetch(url);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      return new Uint8Array(await res.arrayBuffer());
+    }
+
+    async function fetchIconSvg(family, name) {
+      // Lucide icons are available on jsDelivr as plain SVG files
+      var cdnUrl = 'https://cdn.jsdelivr.net/npm/lucide-static@latest/icons/' + name + '.svg';
+      var res = await fetch(cdnUrl);
+      if (!res.ok) throw new Error('HTTP ' + res.status + ' for icon ' + name);
+      return await res.text();
+    }
+
+    function send(msg) { parent.postMessage({ pluginMessage: msg }, '*'); }
+    function tick()    { return new Promise(function(r) { setTimeout(r, 0); }); }
+
+    btnCancel.addEventListener('click', function() { send({ type: 'cancel' }); });
+
+    // ── Log panel ─────────────────────────────────────────────────────────────
+    var logPanel  = document.getElementById('log-panel');
+    var logCount  = document.getElementById('log-count');
+    var logOpen   = false;
+    var logTotal  = 0;
+
+    function toggleLog() {
+      logOpen = !logOpen;
+      logPanel.style.display = logOpen ? 'block' : 'none';
+      document.getElementById('log-toggle').firstChild.textContent = (logOpen ? '▼' : '▶') + ' Console log ';
+    }
+
+    function appendLog(level, text) {
+      logTotal++;
+      logCount.textContent = '(' + logTotal + ')';
+      var el = document.createElement('div');
+      el.className = 'entry ' + level;
+      el.textContent = '[' + level.toUpperCase() + '] ' + text;
+      logPanel.appendChild(el);
+      if (logOpen) logPanel.scrollTop = logPanel.scrollHeight;
+      // Auto-open the panel on first error
+      if (level === 'error' && !logOpen) toggleLog();
+    }
+
+    // ── Messages from plugin ──────────────────────────────────────────────────
+    window.onmessage = function(event) {
+      var msg = event.data.pluginMessage;
+      if (!msg) return;
+      if (msg.type === 'done') {
+        progressWrap.style.display = 'none';
+        setStatus('✅ Import complete!', 'success');
+        btnImport.disabled = false;
+        btnCancel.disabled = false;
+      } else if (msg.type === 'progress') {
+        setProgress(msg.label || 'Working…', msg.pct || 0);
+      } else if (msg.type === 'error') {
+        progressWrap.style.display = 'none';
+        setStatus('Error: ' + msg.message, 'error');
+        btnImport.disabled = false;
+        btnCancel.disabled = false;
+      } else if (msg.type === 'log') {
+        appendLog(msg.level, msg.text);
+      }
+    };
+  </script>
+</body>
+</html>
