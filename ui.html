@@ -231,7 +231,7 @@
       var sent = 0;
 
       // ── Tell the plugin what's coming ──────────────────────────────────────
-      send({ type: 'import_start', pen: penData });
+      send({ type: 'import_start', pen: penData, totalAssets: totalAssets });
 
       // ── Stream local images ────────────────────────────────────────────────
       var localArr = Array.from(localImageNames);

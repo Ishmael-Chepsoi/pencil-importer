@@ -288,10 +288,14 @@ function parseFill(fill, vars, imageMap) {
 }
 
 function parseGradientFill(fill, vars) {
-  const stops = (fill.colors || []).map(c => {
+  const rawColors = fill.colors || [];
+  // Pencil sometimes stores positions on a 0–100 scale; Figma requires 0–1
+  const needsNorm = rawColors.some(c => (c.position || 0) > 1);
+  const stops = rawColors.map(c => {
     const colorVal = resolveVar(c.color, vars) || c.color || '#000000';
     const col = parseHex(colorVal);
-    return { position: c.position != null ? c.position : 0, color: { r: col.r, g: col.g, b: col.b, a: col.a } };
+    const pos = c.position != null ? c.position : 0;
+    return { position: needsNorm ? pos / 100 : pos, color: { r: col.r, g: col.g, b: col.b, a: col.a } };
   });
 
   const rotation = fill.rotation != null ? fill.rotation : 0;
@@ -360,7 +364,7 @@ function applyStroke(node, stroke, vars) {
   if (!rawFill || typeof rawFill !== 'string') return;
   const c = parseHex(rawFill);
   node.strokes = [{ type: 'SOLID', color: { r: c.r, g: c.g, b: c.b }, opacity: c.a }];
-  if (stroke.thickness != null) node.strokeWeight = stroke.thickness;
+  if (typeof stroke.thickness === 'number') node.strokeWeight = stroke.thickness;
   switch (stroke.align) {
     case 'inside':  node.strokeAlign = 'INSIDE';  break;
     case 'outside': node.strokeAlign = 'OUTSIDE'; break;
