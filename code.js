@@ -616,7 +616,9 @@ function createIconFont(penNode, vars, iconMap) {
     group.resize(w, h);
     if (penNode.x != null) group.x = penNode.x;
     if (penNode.y != null) group.y = penNode.y;
-    // Tint all vector children with the icon fill color
+    // Tint all vector children — apply to fills or strokes depending on what
+    // each vector already uses (Lucide icons are stroke-based; other families
+    // may be fill-based).  If a node has neither, default to strokes.
     var fillVal = resolveVar(penNode.fill, vars);
     if (typeof fillVal === 'string') {
       var c = parseHex(fillVal);
@@ -624,7 +626,11 @@ function createIconFont(penNode, vars, iconMap) {
       (function tint(node) {
         for (var i = 0; i < (node.children || []).length; i++) {
           var ch = node.children[i];
-          if ('fills' in ch) try { ch.fills = [paint]; } catch(_) {}
+          var hasFills   = 'fills'   in ch && ch.fills.length   > 0;
+          var hasStrokes = 'strokes' in ch && ch.strokes.length > 0;
+          if (hasFills)                              try { ch.fills   = [paint]; } catch(_) {}
+          if (hasStrokes)                            try { ch.strokes = [paint]; } catch(_) {}
+          if (!hasFills && !hasStrokes && 'strokes' in ch) try { ch.strokes = [paint]; } catch(_) {}
           tint(ch);
         }
       })(group);
