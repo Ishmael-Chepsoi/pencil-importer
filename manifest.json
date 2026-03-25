@@ -1,8 +1,15 @@
 {
   "name": "Pencil (.pen) Importer",
-  "id": "com.pencil.pen-importer",
+  "id": "1618743954586778078",
   "api": "1.0.0",
   "main": "code.js",
   "ui": "ui.html",
-  "editorType": ["figma"]
+  "editorType": ["figma"],
+  "icon": "devicon_figma.png",
+  "networkAccess": {
+    "allowedDomains": [
+      "https://cdn.jsdelivr.net"
+    ]
+  },
+  "documentAccess": "dynamic-page"
 }

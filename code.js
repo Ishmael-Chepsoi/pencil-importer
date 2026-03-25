@@ -194,8 +194,20 @@ function fontWeightToStyle(weight, fontStyle) {
 
 function resolveVar(value, vars) {
   if (typeof value === 'string' && value.startsWith('$')) {
-    const entry = vars[value.slice(1)];
-    return entry ? entry.value : null;
+    const key   = value.slice(1);
+    const entry = vars[key];
+    if (entry == null) return null;
+    // Flat map  { key: "#hex" }  →  entry is the value directly
+    if (typeof entry !== 'object') return entry;
+    // Nested    { key: { value: "#hex" | [{value,theme},…] } }
+    const val = entry.value;
+    if (val == null) return null;
+    // Theme-array format: [{value:"#hex", theme:{mode:"light"}}, …]
+    if (Array.isArray(val)) {
+      const light = val.find(function(t) { return t && t.theme && t.theme.mode === 'light'; }) || val[0];
+      return light ? light.value : null;
+    }
+    return val;
   }
   return value;
 }
@@ -285,6 +297,16 @@ function parseFill(fill, vars, imageMap) {
   }
 
   return null;
+}
+
+// Handles both a single fill value and an array of fill layers.
+// Always returns a Figma Paint[].
+function parseFills(rawFill, vars, imageMap) {
+  if (Array.isArray(rawFill)) {
+    return rawFill.map(f => parseFill(f, vars, imageMap)).filter(Boolean);
+  }
+  const p = parseFill(rawFill, vars, imageMap);
+  return p ? [p] : [];
 }
 
 function parseGradientFill(fill, vars) {
@@ -461,17 +483,23 @@ function toPrimaryAlign(v) {
 
 function createNode(penNode, vars, imageMap, iconMap, parentW, parentH) {
   try {
+    var node;
     switch (penNode.type) {
-      case 'frame':     return createFrame(penNode, vars, imageMap, iconMap, parentW, parentH);
-      case 'rectangle': return createRect(penNode, vars, imageMap, parentW, parentH);
-      case 'ellipse':   return createEllipse(penNode, vars, imageMap, parentW, parentH);
-      case 'text':      return createText(penNode, vars, parentW, parentH);
-      case 'icon_font': return createIconFont(penNode, vars, iconMap);
+      case 'frame':     node = createFrame(penNode, vars, imageMap, iconMap, parentW, parentH); break;
+      case 'rectangle': node = createRect(penNode, vars, imageMap, parentW, parentH);           break;
+      case 'ellipse':   node = createEllipse(penNode, vars, imageMap, parentW, parentH);        break;
+      case 'text':      node = createText(penNode, vars, parentW, parentH);                     break;
+      case 'icon_font': node = createIconFont(penNode, vars, iconMap);                          break;
+      case 'image':     node = createImageNode(penNode, vars, imageMap, parentW, parentH);      break;
       default:
-        // Unknown but has children → treat as frame
-        if (penNode.children) return createFrame(penNode, vars, imageMap, iconMap, parentW, parentH);
-        return null;
+        // group / unknown with children → treat as frame
+        node = penNode.children ? createFrame(penNode, vars, imageMap, iconMap, parentW, parentH) : null;
     }
+    // Apply opacity to every node type (0–1 in Pencil, 0–1 in Figma)
+    if (node && penNode.opacity != null) {
+      try { node.opacity = penNode.opacity; } catch (_) {}
+    }
+    return node;
   } catch (e) {
     console.error('createNode failed for', penNode.id, penNode.type, e);
     return null;
@@ -510,8 +538,7 @@ function createFrame(penNode, vars, imageMap, iconMap, parentW, parentH) {
   frame.clipsContent = penNode.clip !== false;
 
   // ── Fill ──────────────────────────────────────────────────────────────────
-  const paint = parseFill(penNode.fill, vars, imageMap);
-  frame.fills = paint ? [paint] : [];
+  frame.fills = parseFills(penNode.fill, vars, imageMap);
 
   // ── Corner radius ─────────────────────────────────────────────────────────
   applyCornerRadius(frame, penNode.cornerRadius);
@@ -643,6 +670,28 @@ function createIconFont(penNode, vars, iconMap) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// IMAGE NODE  (type:"image" — the node itself is an image, not an image fill)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function createImageNode(penNode, vars, imageMap, parentW, parentH) {
+  const rect = figma.createRectangle();
+  rect.name = penNode.name || 'Image';
+  rect.resize(safeW(penNode.width, parentW), safeH(penNode.height, parentH));
+  if (penNode.x != null) rect.x = penNode.x;
+  if (penNode.y != null) rect.y = penNode.y;
+
+  // Build a synthetic image-fill descriptor and delegate to parseFill
+  const syntheticFill = { type: 'image', url: penNode.url || penNode.src || '', mode: penNode.mode };
+  const paint = parseFill(syntheticFill, vars, imageMap);
+  rect.fills = paint ? [paint] : [];
+
+  applyCornerRadius(rect, penNode.cornerRadius);
+  if (penNode.stroke) applyStroke(rect, penNode.stroke, vars);
+  if (penNode.effect) applyEffect(rect, penNode.effect, vars);
+  return rect;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // RECTANGLE
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -655,8 +704,7 @@ function createRect(penNode, vars, imageMap, parentW, parentH) {
   if (penNode.x != null) rect.x = penNode.x;
   if (penNode.y != null) rect.y = penNode.y;
 
-  const paint = parseFill(penNode.fill, vars, imageMap);
-  rect.fills = paint ? [paint] : [];
+  rect.fills = parseFills(penNode.fill, vars, imageMap);
 
   applyCornerRadius(rect, penNode.cornerRadius);
   if (penNode.stroke) applyStroke(rect, penNode.stroke, vars);
@@ -678,8 +726,7 @@ function createEllipse(penNode, vars, imageMap, parentW, parentH) {
   if (penNode.x != null) ellipse.x = penNode.x;
   if (penNode.y != null) ellipse.y = penNode.y;
 
-  const paint = parseFill(penNode.fill, vars, imageMap);
-  ellipse.fills = paint ? [paint] : [];
+  ellipse.fills = parseFills(penNode.fill, vars, imageMap);
 
   if (penNode.stroke) applyStroke(ellipse, penNode.stroke, vars);
   if (penNode.effect) applyEffect(ellipse, penNode.effect, vars);
@@ -719,9 +766,9 @@ function createText(penNode, vars, parentW, parentH) {
   if (typeof fillVal === 'string') {
     const c = parseHex(fillVal);
     text.fills = [{ type: 'SOLID', color: { r: c.r, g: c.g, b: c.b }, opacity: c.a }];
-  } else {
-    text.fills = [];
   }
+  // If fill is unresolved or missing, leave Figma's default black intact
+  // (setting fills=[] would make the text invisible).
 
   // ── Letter spacing ────────────────────────────────────────────────────────
   if (penNode.letterSpacing != null) {
